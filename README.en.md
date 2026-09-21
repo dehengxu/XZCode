@@ -62,6 +62,12 @@ Set `ZCODE_DATA_BASE_DIR` to use a separate development data directory. For exam
 ZCODE_DATA_BASE_DIR="$HOME/.zcode-dev-home" pnpm dev:desktop:test
 ```
 
+### Remote features (SSH/WSL)
+
+Run `pnpm bootstrap:with-remote` to prepare remote assets (mock CDN), then start `pnpm dev:desktop`. When connecting to a remote project, choose “Download locally, then upload” for the asset source. Development assets come from `packages/desktop/mock-cdn` and local build outputs and are uploaded over SFTP without accessing the CDN.
+
+When an SSH alias from `~/.ssh/config` is selected, standard single-hop and multi-hop `ProxyJump` settings are applied automatically. Jump-host authentication reuses the local OpenSSH client, SSH Agent, and keys in non-interactive mode. Custom `ProxyCommand` values and interactive jump-host password or OTP prompts are not supported yet.
+
 ### Web Development
 
 Use development mode when editing Web or backend source code:

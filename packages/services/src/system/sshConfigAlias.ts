@@ -29,6 +29,20 @@ interface AliasMeta {
   source: string;
 }
 
+export interface SSHProxyJumpResolution {
+  sshExecutablePath: string;
+  configPath: string;
+  proxyJump: string;
+}
+
+interface ParsedSshConfigQuery {
+  host?: string;
+  port?: number;
+  username?: string;
+  proxyJump?: string;
+  proxyCommand?: string;
+}
+
 let aliasCache: {
   expiresAt: number;
   options: SSHConfigAliasOption[];
@@ -390,6 +404,31 @@ function normalizeIdentityPath(rawValue: string): string | undefined {
   return expanded.length > 0 ? expanded : undefined;
 }
 
+function findFallbackDirectiveValue(
+  blocks: ParsedBlock[],
+  alias: string,
+  directiveKey: string,
+): string | undefined {
+  for (const block of blocks) {
+    if (!blockMatchesAlias(block.patterns, alias)) {
+      continue;
+    }
+
+    for (const directive of block.directives) {
+      if (directive.key === directiveKey) {
+        const value = directive.value.trim();
+        return value.length > 0 ? value : undefined;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function isEnabledSSHProxyDirective(value: string | undefined): value is string {
+  return typeof value === "string" && value.length > 0 && value.toLowerCase() !== "none";
+}
+
 function buildFallbackOptions(
   blocks: ParsedBlock[],
   aliasMetas: AliasMeta[],
@@ -500,16 +539,20 @@ async function runSshConfigQuery(params: {
     let finished = false;
     let stdout = "";
 
-    const child = spawn(sshExecutablePath, ["-G", "-F", configPath, "-o", "BatchMode=yes", alias], {
-      stdio: ["ignore", "pipe", "ignore"],
-      windowsHide: true,
-      env: {
-        ...process.env,
-        SSH_ASKPASS_REQUIRE: "never",
-        SSH_ASKPASS: "",
-        DISPLAY: "",
+    const child = spawn(
+      sshExecutablePath,
+      ["-G", "-F", configPath, "-o", "BatchMode=yes", "--", alias],
+      {
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+        env: {
+          ...process.env,
+          SSH_ASKPASS_REQUIRE: "never",
+          SSH_ASKPASS: "",
+          DISPLAY: "",
+        },
       },
-    });
+    );
 
     const timeoutId = setTimeout(() => {
       if (finished) {
@@ -550,10 +593,12 @@ async function runSshConfigQuery(params: {
   });
 }
 
-function parseSshGOutput(output: string): Omit<SSHConfigAliasOption, "alias"> {
+function parseSshGOutput(output: string): ParsedSshConfigQuery {
   let host: string | undefined;
   let port: number | undefined;
   let username: string | undefined;
+  let proxyJump: string | undefined;
+  let proxyCommand: string | undefined;
 
   for (const line of output.split(/\r?\n/)) {
     const trimmed = line.trim();
@@ -589,6 +634,16 @@ function parseSshGOutput(output: string): Omit<SSHConfigAliasOption, "alias"> {
           username = value;
         }
         break;
+      case "proxyjump":
+        if (!proxyJump && value.length > 0) {
+          proxyJump = value;
+        }
+        break;
+      case "proxycommand":
+        if (!proxyCommand && value.length > 0) {
+          proxyCommand = value;
+        }
+        break;
       default:
         break;
     }
@@ -598,7 +653,14 @@ function parseSshGOutput(output: string): Omit<SSHConfigAliasOption, "alias"> {
     host,
     port,
     username,
+    proxyJump,
+    proxyCommand,
   };
+}
+
+export function parseSSHProxyJumpFromConfigOutput(output: string): string | null {
+  const proxyJump = parseSshGOutput(output).proxyJump;
+  return isEnabledSSHProxyDirective(proxyJump) ? proxyJump : null;
 }
 
 async function mapWithConcurrency<T, R>(
@@ -705,4 +767,56 @@ export async function listSSHConfigAliasesFromLocalConfig(): Promise<SSHConfigAl
     options,
   };
   return cloneAliasOptions(options);
+}
+
+export async function resolveSSHProxyJumpFromLocalConfig(
+  alias: string,
+): Promise<SSHProxyJumpResolution | null> {
+  const normalizedAlias = alias.trim();
+  if (!normalizedAlias) {
+    throw new Error("SSH config alias 不能为空");
+  }
+
+  const rootConfigPath = join(homedir(), ".ssh", "config");
+  if (!existsSync(rootConfigPath)) {
+    throw new Error(`无法解析 SSH config alias ${normalizedAlias}：~/.ssh/config 不存在`);
+  }
+
+  const blocks = await parseConfigBlocks(rootConfigPath, new Set<string>(), 0);
+  const fallbackProxyJump = findFallbackDirectiveValue(blocks, normalizedAlias, "proxyjump");
+  const fallbackProxyCommand = findFallbackDirectiveValue(blocks, normalizedAlias, "proxycommand");
+  const sshExecutablePath = resolveSshExecutablePath();
+
+  if (!sshExecutablePath) {
+    if (isEnabledSSHProxyDirective(fallbackProxyJump)) {
+      throw new Error("当前 SSH alias 配置了 ProxyJump，但本机未找到 OpenSSH ssh 可执行文件");
+    }
+    if (isEnabledSSHProxyDirective(fallbackProxyCommand)) {
+      throw new Error("当前 SSH alias 使用 ProxyCommand，ZCode 首版仅支持 ProxyJump");
+    }
+    return null;
+  }
+
+  const sshOutput = await runSshConfigQuery({
+    sshExecutablePath,
+    configPath: rootConfigPath,
+    alias: normalizedAlias,
+  });
+  if (!sshOutput) {
+    throw new Error(`无法通过 OpenSSH 解析 SSH config alias ${normalizedAlias}`);
+  }
+
+  const parsed = parseSshGOutput(sshOutput);
+  if (isEnabledSSHProxyDirective(parsed.proxyCommand)) {
+    throw new Error("当前 SSH alias 使用 ProxyCommand，ZCode 首版仅支持 ProxyJump");
+  }
+  if (!isEnabledSSHProxyDirective(parsed.proxyJump)) {
+    return null;
+  }
+
+  return {
+    sshExecutablePath,
+    configPath: rootConfigPath,
+    proxyJump: parsed.proxyJump,
+  };
 }

@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
+import { resolveSSHProxyJumpFromLocalConfig } from "@zcode/services/node";
 import type { RemoteTarget } from "@zcode/shared";
 import type { IRemoteBackend } from "./backend.js";
 
@@ -12,6 +13,10 @@ export async function createRemoteBackend(target: RemoteTarget): Promise<IRemote
         const keyPath = target.privateKeyPath.replace(/^~/, homedir());
         privateKey = await readFile(keyPath);
       }
+      const sshConfigAlias = target.sshConfigAlias?.trim();
+      const proxyJump = sshConfigAlias
+        ? await resolveSSHProxyJumpFromLocalConfig(sshConfigAlias)
+        : null;
 
       return new SSHBackend({
         host: target.host,
@@ -21,6 +26,7 @@ export async function createRemoteBackend(target: RemoteTarget): Promise<IRemote
         privateKeyPath: target.privateKeyPath,
         privateKeyPassphrase: target.privateKeyPassphrase,
         privateKey,
+        ...(proxyJump ? { proxyJump } : {}),
       });
     }
     case "wsl": {

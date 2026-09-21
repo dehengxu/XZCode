@@ -1397,7 +1397,8 @@ const enUS: Record<string, string> = {
   "ssh.configAliasEmpty": "No SSH config aliases available on this machine.",
   "ssh.configAliasLoadFailed":
     "Failed to load SSH config aliases. You can still enter connection info manually.",
-  "ssh.configAliasDescription": "Select an alias to prefill host, port, username, and private key.",
+  "ssh.configAliasDescription":
+    "Select an alias to prefill host, port, username, and private key. Configured ProxyJump hops are applied automatically.",
   "ssh.connect": "Connect",
   "ssh.cancel": "Cancel",
   "ssh.connecting": "Connecting...",

@@ -1307,7 +1307,8 @@ const zhCN: Record<string, string> = {
   "ssh.configAliasSearchPlaceholder": "搜索 SSH 配置别名",
   "ssh.configAliasEmpty": "当前机器未发现可用的 SSH 配置别名。",
   "ssh.configAliasLoadFailed": "SSH 配置别名读取失败，仍可手动输入连接信息。",
-  "ssh.configAliasDescription": "选择别名后会自动填充主机、端口、用户名和私钥路径。",
+  "ssh.configAliasDescription":
+    "选择别名后会自动填充主机、端口、用户名和私钥路径；若配置了 ProxyJump，连接时会自动使用跳板链路。",
   "ssh.connect": "连接",
   "ssh.cancel": "取消",
   "ssh.connecting": "正在连接...",

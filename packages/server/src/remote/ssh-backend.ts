@@ -35,6 +35,11 @@ import {
   formatSSHUploadLabel,
   readLocalFileSize,
 } from "@zcode/server/remote/sshUploadProgress.js";
+import {
+  createSSHProxyJumpTunnel,
+  type SSHProxyJumpTunnel,
+  type SSHProxyJumpTunnelInput,
+} from "@zcode/server/remote/sshProxyJump.js";
 
 export interface SSHBackendOptions {
   host: string;
@@ -45,6 +50,7 @@ export interface SSHBackendOptions {
   privateKeyPassphrase?: string;
   password?: string;
   agent?: string;
+  proxyJump?: Pick<SSHProxyJumpTunnelInput, "sshExecutablePath" | "configPath" | "proxyJump">;
 }
 
 type SSHUploadFailureKind = "sftp-session" | "sftp-write" | "local-read" | "aborted";
@@ -93,6 +99,8 @@ export class SSHBackend implements IRemoteBackend {
   private client: SSHClient;
   private connected = false;
   private readonly config: ConnectConfig;
+  private readonly proxyJump: SSHBackendOptions["proxyJump"];
+  private proxyJumpTunnel: SSHProxyJumpTunnel | null = null;
   private homeDirPromise: Promise<string> | null = null;
   private execUploadOnly = false;
   private disposed = false;
@@ -137,6 +145,7 @@ export class SSHBackend implements IRemoteBackend {
       password: options.password,
       agent: options.agent,
     });
+    this.proxyJump = options.proxyJump;
     if (resolveZCodeRuntimeEnv(process.env) === "development") {
       this.config.debug = (message: string) => {
         // SSH ready 超时只暴露 client-timeout 时无法判断卡在 TCP、协商还是认证。
@@ -176,6 +185,17 @@ export class SSHBackend implements IRemoteBackend {
     this.assertNotDisposed();
     if (this.connected) return;
     return new Promise((resolve, reject) => {
+      const connectConfig = { ...this.config };
+      if (this.proxyJump) {
+        this.disposeProxyJumpTunnel();
+        this.proxyJumpTunnel = createSSHProxyJumpTunnel({
+          ...this.proxyJump,
+          targetHost: connectConfig.host ?? "",
+          targetPort: connectConfig.port ?? 22,
+        });
+        connectConfig.sock = this.proxyJumpTunnel.socket;
+      }
+
       const handleReady = () => {
         this.client.off("error", handleConnectError);
         if (this.disposed) {
@@ -192,12 +212,25 @@ export class SSHBackend implements IRemoteBackend {
       };
       const handleConnectError = (error: unknown) => {
         this.client.off("ready", handleReady);
+        this.disposeProxyJumpTunnel();
         reject(normalizeSSHConnectError(error));
       };
       this.client.once("ready", handleReady);
       this.client.once("error", handleConnectError);
-      this.client.connect(this.config);
+      try {
+        this.client.connect(connectConfig);
+      } catch (error) {
+        this.client.off("ready", handleReady);
+        this.client.off("error", handleConnectError);
+        this.disposeProxyJumpTunnel();
+        reject(normalizeSSHConnectError(error));
+      }
     });
+  }
+
+  private disposeProxyJumpTunnel(): void {
+    this.proxyJumpTunnel?.dispose();
+    this.proxyJumpTunnel = null;
   }
 
   private reportDisconnect(reason: RemoteDisconnectReason, error?: Error): void {
@@ -206,6 +239,7 @@ export class SSHBackend implements IRemoteBackend {
 
     this.connected = false;
     this.homeDirPromise = null;
+    this.disposeProxyJumpTunnel();
 
     if (!shouldReport) {
       return;
@@ -607,6 +641,7 @@ export class SSHBackend implements IRemoteBackend {
     this.client.off("close", this.onClientClose);
     this.client.off("end", this.onClientEnd);
     this.client.end();
+    this.disposeProxyJumpTunnel();
     this.connected = false;
     this.disconnectEmitter.dispose();
   }

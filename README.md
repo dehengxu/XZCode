@@ -66,6 +66,8 @@ ZCODE_DATA_BASE_DIR="$HOME/.zcode-dev-home" pnpm dev:desktop:test
 
 先执行 `pnpm bootstrap:with-remote` 准备远程资源（mock-cdn），再 `pnpm dev:desktop`；连接远程项目时资源选择「本地下载后上传」。开发态资源取自本地 `packages/desktop/mock-cdn` 和本地构建产物，经 SFTP 上传到远程，不访问 CDN。
 
+SSH 连接选择本机 `~/.ssh/config` alias 后，会自动应用标准 `ProxyJump` 单跳或多跳配置。跳板机认证复用本机 OpenSSH、SSH Agent 和密钥，并以非交互模式运行；当前不支持自定义 `ProxyCommand` 或跳板机密码/OTP 交互。
+
 ### Web 开发
 
 修改 Web 或后端源码时，使用开发模式：
